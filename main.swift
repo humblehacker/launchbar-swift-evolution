@@ -1,9 +1,6 @@
-#!/usr/bin/swift
-//
-// se-lookup.swift
-//
-// A script filter for looking up swift-evolution proposals
-// in Alfred <https://www.alfredapp.com/>.
+#!/usr/bin/env swift
+
+// LaunchBar Action Script
 
 import Foundation
 
@@ -166,66 +163,34 @@ extension Proposal {
     }
 }
 
-/// An item that a Script Filter workflow returns to Alfred for display.
-/// Represents one row in an Alfred result set.
+/// An item that a LaunchBar action expects to receive from a script.
+/// Represents one row in LaunchBar result set.
 ///
-/// Documentation: <https://www.alfredapp.com/help/workflows/inputs/script-filter/json/>
-struct AlfredItem: Encodable {
-    enum `Type`: String, Encodable {
-        /// An item that is not a file.
-        case `default`
-        /// "type": "file" makes Alfred treat your result as a file on your
-        /// system. This allows the user to perform actions on the file like
-        /// they can with Alfred's standard file filters.
-        case file
-        /// When returning files, Alfred will check if the file exists before
-        /// presenting that result to the user. This has a very small
-        /// performance implication but makes the results as predictable as
-        /// possible. If you would like Alfred to skip this check as you are
-        /// certain that the files you are returning exist, you can use
-        /// "type": "file:skipcheck".
-        case fileSkipCheck = "file:skipcheck"
-    }
-
-    /// A unique identifier for the item which allows Alfred to learn about this
-    /// item for subsequent sorting and ordering of the user's actioned results.
-    ///
-    /// If you would like Alfred to always show the results in the order you
-    /// return them from your script, exclude the UID field.
-    var uid: String?
+/// Documentation: <https://developer.obdev.at/launchbar-developer-documentation/#/script-output>
+struct LBItem: Encodable {
     /// The title displayed in the result row.
     var title: String
     /// The subtitle displayed in the result row.
     var subtitle: String?
-    /// The argument which is passed through the workflow to the connected
-    /// output action. Optional, but strongly recommended.
-    var arg: String?
-    /// Whether this item is valid or not. If an item is valid then Alfred will
-    /// action this item when the user presses return. If the item is not valid,
-    /// Alfred will do nothing.
-    var valid: Bool = true
-    /// An optional but recommended string you can provide which is populated
-    /// into Alfred's search field if the user auto-completes (Tab key by
-    /// default) the selected result.
-    var autocomplete: String?
-    /// The item type.
-    var type: `Type` = .default
-    /// A Quick Look URL which will be visible if the user uses the Quick Look
-    /// feature within Alfred (tapping Shift, or Cmd+Y). Note that quicklookurl
-    /// will also accept a file path, both absolute and relative to home
-    /// using ~/.
-    var quicklookurl: String?
-    /// Variables that will be available to subsequent actions in the Alfred
-    /// workflow when the user selects this item.
-    ///
-    /// Example: A variable `"proposal_id": "SE-0270"` will be available in
-    /// Alfred as `{var:proposal_id}`.
-    var variables: [String: String]?
+    var actionArgument: String?
+    /// A URL that the item represents. When the user selects the item and hits Enter, this URL is opened.
+    var url: String?
+    /// The icon for the item. This is a string that is interpreted the same way as CFBundleIconFile 
+    /// in the action’s Info.plist.
+    var icon: String?
+    /// An optional text that appears right–aligned.
+    var label: String?
+    /// An optional text that appears right–aligned. Similar to label, but with a rounded rectangle behind 
+    /// the text. If both label and badge are set, label appears to the left of badge.
+    var badge: String?
+    /// If true, subtitle will always be shown if it is set. Otherwise, it will only be shown if the user 
+    /// has “Show all subtitles” enabled in LaunchBar’s appearance preferences or if the modifier keys 
+    /// ⌃⌥⌘ are held down.
+    var alwaysShowsSubtitle: Bool = true
 }
 
-extension AlfredItem {
+extension LBItem {
     init(proposal: Proposal) {
-        self.uid = proposal.url.absoluteString
         self.title = "\(proposal.id): \(proposal.title)"
         var subtitle = proposal.status.description
         if let upcomingFeatureFlag = proposal.upcomingFeatureFlag {
@@ -235,15 +200,9 @@ extension AlfredItem {
             }
         }
         self.subtitle = subtitle
-        self.arg = proposal.url.absoluteString
-        self.autocomplete = proposal.id
-        self.quicklookurl = proposal.url.absoluteString
-        self.variables = [
-            "proposal_id": proposal.id,
-            "proposal_title": proposal.title,
-            "proposal_status": proposal.status.description,
-            "proposal_url": proposal.url.absoluteString,
-        ]
+        
+        self.url = proposal.url.absoluteString
+        self.icon = "Swift.png"
     }
 
     init(error: Error) {
@@ -259,11 +218,9 @@ extension AlfredItem {
         var errorInfo = ""
         dump(error, to: &errorInfo)
         self.init(
-            uid: "status", // Identifier for status messages
             title: title,
             subtitle: errorInfo,
-            arg: "\(title)\n\(errorInfo)",
-            valid: false
+            actionArgument: "\(title)\n\(errorInfo)"
         )
     }
 }
@@ -271,7 +228,7 @@ extension AlfredItem {
 // MARK: - Main program
 
 let query = CommandLine.arguments.dropFirst().joined(separator: " ")
-let result: [AlfredItem]
+let result: [LBItem]
 do {
     let data = try Data(contentsOf: SwiftEvolution.dataURL)
     let decoder = JSONDecoder()
@@ -280,12 +237,30 @@ do {
         .map(Proposal.init(dto:))
         .filter { $0.matches(query) }
         .sorted { ($0.number ?? 0) > ($1.number ?? 0) }
-        .map(AlfredItem.init(proposal:))
+        .map(LBItem.init(proposal:))
 } catch {
-    result = [AlfredItem(error: error)]
+    result = [LBItem(error: error)]
 }
 
 let encoder = JSONEncoder()
 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-let resultData = try encoder.encode(["items": result])
+let resultData = try encoder.encode(result)
 print(String(decoding: resultData, as: UTF8.self))
+
+// ---
+
+// Note: The first argument is the script's path, ignore it:
+// let arguments = Array(CommandLine.arguments.dropFirst())
+// var items = arguments.map { ["title": $0] }
+// items.insert(["title": "\(arguments.count) arguments passed"], at: 0)
+// 
+// do {
+//     let data = try JSONSerialization.data(withJSONObject: items, options: .prettyPrinted)
+//     if let string = String(data: data, encoding: .utf8) {
+//         print(string)
+//     } else {
+//         NSLog("Error converting JSON data to UTF-8 string")
+//     }
+// } catch {
+//     NSLog("Error converting data to JSON: \(error)")
+// }

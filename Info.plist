@@ -1,225 +1,45 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8" ?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>bundleid</key>
-	<string>hu.lorentey.alfred.swift-evolution</string>
-	<key>connections</key>
+	<key>CFBundleIconFile</key>
+	<string>icon.png</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.humblehacker.LaunchBar.action.SwiftEvolution</string>
+	<key>CFBundleName</key>
+	<string>Swift Evolution</string>
+	<key>LBDescription</key>
 	<dict>
-		<key>19A1DB67-4FFB-406B-AB22-D350EE719F7E</key>
-		<array>
-			<dict>
-				<key>destinationuid</key>
-				<string>49C29C4F-E608-4034-89F2-35A382BCACE4</string>
-				<key>modifiers</key>
-				<integer>0</integer>
-				<key>modifiersubtext</key>
-				<string></string>
-				<key>vitoclose</key>
-				<false/>
-			</dict>
-			<dict>
-				<key>destinationuid</key>
-				<string>EEDCBD3F-DC6D-4F1D-A2A4-996A0DA4ADFC</string>
-				<key>modifiers</key>
-				<integer>1048576</integer>
-				<key>modifiersubtext</key>
-				<string>Copy title</string>
-				<key>vitoclose</key>
-				<false/>
-			</dict>
-			<dict>
-				<key>destinationuid</key>
-				<string>7FF77CFD-8E46-40C0-820B-5F1D4AF4BAFA</string>
-				<key>modifiers</key>
-				<integer>1179648</integer>
-				<key>modifiersubtext</key>
-				<string>Copy Markdown link</string>
-				<key>vitoclose</key>
-				<false/>
-			</dict>
-		</array>
+		<key>LBAuthor</key>
+		<string />
+		<key>LBEmail</key>
+		<string />
+		<key>LBTwitter</key>
+		<string />
+		<key>LBWebsiteURL</key>
+		<string />
 	</dict>
-	<key>createdby</key>
-	<string>Károly Lőrentey &amp; Ole Begemann</string>
-	<key>description</key>
-	<string>Use keyword "se" followed by a proposal number or title to look it up</string>
-	<key>disabled</key>
-	<false/>
-	<key>name</key>
-	<string>Swift Evolution Proposals</string>
-	<key>objects</key>
-	<array>
-		<dict>
-			<key>config</key>
-			<dict>
-				<key>browser</key>
-				<string></string>
-				<key>skipqueryencode</key>
-				<false/>
-				<key>skipvarencode</key>
-				<false/>
-				<key>spaces</key>
-				<string></string>
-				<key>url</key>
-				<string>{query}</string>
-			</dict>
-			<key>type</key>
-			<string>alfred.workflow.action.openurl</string>
-			<key>uid</key>
-			<string>49C29C4F-E608-4034-89F2-35A382BCACE4</string>
-			<key>version</key>
-			<integer>1</integer>
-		</dict>
-		<dict>
-			<key>config</key>
-			<dict>
-				<key>autopaste</key>
-				<false/>
-				<key>clipboardtext</key>
-				<string>{var:proposal_title}</string>
-				<key>ignoredynamicplaceholders</key>
-				<false/>
-				<key>transient</key>
-				<false/>
-			</dict>
-			<key>type</key>
-			<string>alfred.workflow.output.clipboard</string>
-			<key>uid</key>
-			<string>EEDCBD3F-DC6D-4F1D-A2A4-996A0DA4ADFC</string>
-			<key>version</key>
-			<integer>3</integer>
-		</dict>
-		<dict>
-			<key>config</key>
-			<dict>
-				<key>alfredfiltersresults</key>
-				<false/>
-				<key>alfredfiltersresultsmatchmode</key>
-				<integer>0</integer>
-				<key>argumenttreatemptyqueryasnil</key>
-				<false/>
-				<key>argumenttrimmode</key>
-				<integer>0</integer>
-				<key>argumenttype</key>
-				<integer>1</integer>
-				<key>escaping</key>
-				<integer>0</integer>
-				<key>keyword</key>
-				<string>se</string>
-				<key>queuedelaycustom</key>
-				<integer>3</integer>
-				<key>queuedelayimmediatelyinitially</key>
-				<false/>
-				<key>queuedelaymode</key>
-				<integer>2</integer>
-				<key>queuemode</key>
-				<integer>2</integer>
-				<key>runningsubtext</key>
-				<string>Getting Proposals...</string>
-				<key>script</key>
-				<string></string>
-				<key>scriptargtype</key>
-				<integer>1</integer>
-				<key>scriptfile</key>
-				<string>se-lookup.swift</string>
-				<key>subtext</key>
-				<string></string>
-				<key>title</key>
-				<string>Look up swift-evolution proposal</string>
-				<key>type</key>
-				<integer>8</integer>
-				<key>withspace</key>
-				<true/>
-			</dict>
-			<key>type</key>
-			<string>alfred.workflow.input.scriptfilter</string>
-			<key>uid</key>
-			<string>19A1DB67-4FFB-406B-AB22-D350EE719F7E</string>
-			<key>version</key>
-			<integer>3</integer>
-		</dict>
-		<dict>
-			<key>config</key>
-			<dict>
-				<key>autopaste</key>
-				<false/>
-				<key>clipboardtext</key>
-				<string>[{var:proposal_id}: {var:proposal_title}]({var:proposal_url})</string>
-				<key>ignoredynamicplaceholders</key>
-				<false/>
-				<key>transient</key>
-				<false/>
-			</dict>
-			<key>type</key>
-			<string>alfred.workflow.output.clipboard</string>
-			<key>uid</key>
-			<string>7FF77CFD-8E46-40C0-820B-5F1D4AF4BAFA</string>
-			<key>version</key>
-			<integer>3</integer>
-		</dict>
-	</array>
-	<key>readme</key>
-	<string>An Alfred workflow for looking up swift-evolution proposals.
-
-Copyright 2016–2024 Károly Lőrentey &lt;karoly@lorentey.hu&gt; and Ole Begemann &lt;ole@oleb.net&gt;
-
-Requirements:
-
-- The Swift compiler must be installed (e.g. by installing Xcode)
-
-The script filter makes the following variables available to subsequent actions:
-
-- proposal_id (e.g. "SE-0304")
-- proposal_title ("Structured concurrency")
-- proposal_status ("Implemented (Swift 5.5)")
-- proposal_url ("https://github.com/apple/swift-evolution/blob/main/proposals/0304-structured-concurrency.md")
-
-You can use e.g. `{var:proposal_id}` in your own actions to customize the workflow. Refer to the "Copy Markdown link" action for an example.</string>
-	<key>uidata</key>
+	<key>LBScripts</key>
 	<dict>
-		<key>19A1DB67-4FFB-406B-AB22-D350EE719F7E</key>
+		<key>LBDefaultScript</key>
 		<dict>
-			<key>note</key>
-			<string>Script that downloads the proposal data from swift.org and filters them according to the search term.</string>
-			<key>xpos</key>
-			<real>165</real>
-			<key>ypos</key>
-			<real>210</real>
-		</dict>
-		<key>49C29C4F-E608-4034-89F2-35A382BCACE4</key>
-		<dict>
-			<key>xpos</key>
-			<real>430</real>
-			<key>ypos</key>
-			<real>90</real>
-		</dict>
-		<key>7FF77CFD-8E46-40C0-820B-5F1D4AF4BAFA</key>
-		<dict>
-			<key>note</key>
-			<string>Copy Markdown link</string>
-			<key>xpos</key>
-			<real>430</real>
-			<key>ypos</key>
-			<real>350</real>
-		</dict>
-		<key>EEDCBD3F-DC6D-4F1D-A2A4-996A0DA4ADFC</key>
-		<dict>
-			<key>note</key>
-			<string>Copy proposal title</string>
-			<key>xpos</key>
-			<real>430</real>
-			<key>ypos</key>
-			<real>210</real>
+			<key>LBScriptName</key>
+			<string>main</string>
+			<key>LBAcceptedArgumentTypes</key>
+			<array>
+				<string>string</string>
+			</array>
+			<key>LBKeepWindowActive</key>
+			<true />
+			<key>LBLiveFeedbackEnabled</key>
+			<true />
+			<key>LBRequiresArgument</key>
+			<false />
+			<key>LBReturnsResult</key>
+			<true />
+			<key>LBDebugLogEnabled</key>
+			<false />
 		</dict>
 	</dict>
-	<key>userconfigurationconfig</key>
-	<array/>
-	<key>variablesdontexport</key>
-	<array/>
-	<key>version</key>
-	<string>2.2.0</string>
-	<key>webaddress</key>
-	<string>https://github.com/attaswift/alfred-swift-evolution</string>
 </dict>
 </plist>

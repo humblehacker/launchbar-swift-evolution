@@ -1,25 +1,34 @@
-OUTPUT = alfred-swift-evolution.alfredworkflow
-OUTPUT_DEV = alfred-swift-evolution-dev.alfredworkflow
-FILES = Info.plist se-lookup.swift icon.png
+BUILD_PATH = .build/action
+BUNDLE_NAME = Swift Evolution.lbaction
+BUNDLE_PATH = $(BUILD_PATH)/$(BUNDLE_NAME)/Contents
+SCRIPTS_PATH = $(BUNDLE_PATH)/Scripts
+RESOURCES_PATH = $(BUNDLE_PATH)/Resources
+INFO_PLIST = $(BUNDLE_PATH)/Info.plist
+ICON = $(RESOURCES_PATH)/Swift.png
+INSTALL_PATH = $(HOME)/Library/Application Support/LaunchBar/Actions
 
-all: $(OUTPUT)
+.PHONY: all build clean install
 
-# Build a development version of the workflow with a different bundle ID.
-# Useful for testing changes in Alfred without replacing the production version.
-dev: $(OUTPUT_DEV)
+all: build
+
+build:
+	@echo "Building se-lookup executable with Swift Package Manager..."
+	swift build -c release
+	@echo "Assembling LaunchBar action bundle..."
+	rm -rf "$(BUNDLE_NAME)"
+	mkdir -p "$(SCRIPTS_PATH)"
+	cp .build/release/main "$(SCRIPTS_PATH)"
+	mkdir -p "$(RESOURCES_PATH)"
+	cp icon.png "$(RESOURCES_PATH)"
+	cp Info.plist "$(INFO_PLIST)"
+	@echo "LaunchBar action built successfully at: $(BUNDLE_NAME)"
 
 clean:
-	-rm $(OUTPUT) $(OUTPUT_DEV)
+	swift package clean
+	rm -rf .build
 
-$(OUTPUT): $(FILES)
-	zip $@ $^
-
-$(OUTPUT_DEV): $(FILES)
-	-mkdir build-dev
-	cp $^ build-dev/
-	plutil -replace bundleid -string "hu.lorentey.alfred.swift-evolution.dev" build-dev/Info.plist
-	plutil -replace name -string "Swift Evolution Proposals (development)" build-dev/Info.plist
-	zip --junk-paths $@ build-dev/*
-	rm build-dev/*
-	rmdir build-dev
-
+install: build
+	@echo "Installing to $(INSTALL_PATH)"
+	-rm -r "$(INSTALL_PATH)/$(BUNDLE_NAME)" 2>/dev/null
+	cp -Rp "$(BUILD_PATH)/$(BUNDLE_NAME)" "$(INSTALL_PATH)"
+	@echo "Installed successfully. Restart LaunchBar or rescan actions to use."

@@ -1,15 +1,16 @@
-# alfred-swift-evolution
+# launchbar-swift-evolution
 
-An [Alfred] workflow for looking up Swift evolution proposals.
+A [LaunchBar] Action for looking up Swift evolution proposals.
 Written in Swift, of course.
 
-[Alfred]: https://www.alfredapp.com
+[Launchbar]: https://www.obdev.at/products/launchbar
 
 ## Requirements
 
 You must have Swift 5 or newer installed (either by a version of Xcode or
 Command Line Tools).
 
+<!--
 ## Download
 
 Download version 2.2.0 of [alfred-swift-evolution.alfredworkflow][download].
@@ -50,3 +51,4 @@ The script forwards four variables to Alfred that can be used in subsequent work
 * `proposal_url` ("https://github.com/apple/swift-evolution/blob/main/proposals/0304-structured-concurrency.md")
 
 If you want to customize the workflow for your needs, you can use these variables in your actions. Refer to the "Copy Markdown link" action for an example.
+-->
