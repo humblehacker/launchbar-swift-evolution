@@ -202,7 +202,7 @@ extension LBItem {
         self.subtitle = subtitle
         
         self.url = proposal.url.absoluteString
-        self.icon = "Swift.png"
+        self.icon = "icon.png"
     }
 
     init(error: Error) {
