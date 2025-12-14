@@ -21,7 +21,7 @@ let package = Package(
                 "BUILD.md",
                 "CHANGELOG.md",
                 "Info.plist",
-                "LICENSE.md",
+                "LICENSE.txt",
                 "Makefile",
                 "Package.swift",
                 "README.md",

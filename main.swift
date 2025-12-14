@@ -1,8 +1,48 @@
-#!/usr/bin/env swift
+#!/usr/bin/env -S swift -swift-version 6 -Xfrontend -strict-concurrency=complete
 
 // LaunchBar Action Script
 
 import Foundation
+import os
+
+private let logger = Logger(subsystem: "launchbar-swift-evolution", category: "main")
+private let signposter = OSSignposter(subsystem: "launchbar-swift-evolution", category: "network")
+
+enum DebugLogging {
+    nonisolated(unsafe) static var enabled = ProcessInfo.processInfo.environment["SWIFT_EV_LOG_DEBUG"] != nil
+}
+
+private func debugLog(_ message: @autoclosure () -> String) {
+    guard DebugLogging.enabled else { return }
+    let text = message()
+    logger.debug("\(text)")
+    fputs("[debug] \(text)\n", stderr)
+}
+
+struct CommandLineOptions {
+    var query: String
+    var debug: Bool
+    var help: Bool
+}
+
+private func parseCommandLine(_ arguments: [String]) -> CommandLineOptions {
+    var debug = false
+    var help = false
+    var queryParts: [String] = []
+
+    for arg in arguments {
+        switch arg {
+        case "--debug", "-d":
+            debug = true
+        case "--help", "-h":
+            help = true
+        default:
+            queryParts.append(arg)
+        }
+    }
+
+    return CommandLineOptions(query: queryParts.joined(separator: " "), debug: debug, help: help)
+}
 
 struct SwiftEvolution: Decodable {
     static let dataURL = URL(string: "https://download.swift.org/swift-evolution/v1/evolution.json")!
@@ -12,7 +52,7 @@ struct SwiftEvolution: Decodable {
     var proposals: [ProposalDTO]
     /// E.g. "1.0.0"
     var schemaVersion: String
-} 
+}
 
 /// Data transfer object definition for a Swift Evolution proposal in the
 /// JSON format used by swift.org.
@@ -71,14 +111,7 @@ struct Proposal {
     }
 
     func matches(_ query: String) -> Bool {
-        let words = query
-            .split { $0.isWhitespace || $0.isNewline }
-            .map { $0.lowercased() }
-        if words.count == 0 { return true }
-        if words.count == 1, let number = Int(words[0]) {
-            return self.number == number
-        }
-        return words.contains { searchText.contains($0) }
+        matchesQuery(query, number: number, searchText: searchText)
     }
 }
 
@@ -167,7 +200,7 @@ extension Proposal {
 /// Represents one row in LaunchBar result set.
 ///
 /// Documentation: <https://developer.obdev.at/launchbar-developer-documentation/#/script-output>
-struct LBItem: Encodable {
+struct LBItem: Codable {
     /// The title displayed in the result row.
     var title: String
     /// The subtitle displayed in the result row.
@@ -175,16 +208,16 @@ struct LBItem: Encodable {
     var actionArgument: String?
     /// A URL that the item represents. When the user selects the item and hits Enter, this URL is opened.
     var url: String?
-    /// The icon for the item. This is a string that is interpreted the same way as CFBundleIconFile 
+    /// The icon for the item. This is a string that is interpreted the same way as CFBundleIconFile
     /// in the action’s Info.plist.
     var icon: String?
     /// An optional text that appears right–aligned.
     var label: String?
-    /// An optional text that appears right–aligned. Similar to label, but with a rounded rectangle behind 
+    /// An optional text that appears right–aligned. Similar to label, but with a rounded rectangle behind
     /// the text. If both label and badge are set, label appears to the left of badge.
     var badge: String?
-    /// If true, subtitle will always be shown if it is set. Otherwise, it will only be shown if the user 
-    /// has “Show all subtitles” enabled in LaunchBar’s appearance preferences or if the modifier keys 
+    /// If true, subtitle will always be shown if it is set. Otherwise, it will only be shown if the user
+    /// has “Show all subtitles” enabled in LaunchBar’s appearance preferences or if the modifier keys
     /// ⌃⌥⌘ are held down.
     var alwaysShowsSubtitle: Bool = true
 }
@@ -200,7 +233,7 @@ extension LBItem {
             }
         }
         self.subtitle = subtitle
-        
+
         self.url = proposal.url.absoluteString
         self.icon = "icon.png"
     }
@@ -225,24 +258,193 @@ extension LBItem {
     }
 }
 
-// MARK: - Main program
+// MARK: - Cache definitions
 
-let query = CommandLine.arguments.dropFirst().joined(separator: " ")
-let result: [LBItem]
-do {
-    let data = try Data(contentsOf: SwiftEvolution.dataURL)
-    let decoder = JSONDecoder()
-    let swiftEvolution = try decoder.decode(SwiftEvolution.self, from: data)
-    result = swiftEvolution.proposals
-        .map(Proposal.init(dto:))
-        .filter { $0.matches(query) }
-        .sorted { ($0.number ?? 0) > ($1.number ?? 0) }
-        .map(LBItem.init(proposal:))
-} catch {
-    result = [LBItem(error: error)]
+private enum CachePaths {
+    static let directory: URL = {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("launchbar-swift-evolution", isDirectory: true)
+    }()
+    static let cacheFileURL = directory.appendingPathComponent("evolution-cache.json")
 }
+
+private struct CachedProposal: Codable {
+    var item: LBItem
+    /// Lowercased string used for matching queries quickly.
+    var searchText: String
+    var number: Int?
+}
+
+private struct CachePayload: Codable {
+    var etag: String?
+    var lastModified: String?
+    var cachedAt: Date
+    var proposals: [CachedProposal]
+}
+
+// MARK: - Cache helpers
+
+private func loadCache() -> CachePayload? {
+    guard let data = try? Data(contentsOf: CachePaths.cacheFileURL) else { return nil }
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    return try? decoder.decode(CachePayload.self, from: data)
+}
+
+private func saveCache(_ payload: CachePayload) {
+    do {
+        try FileManager.default.createDirectory(at: CachePaths.directory, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(payload)
+        try data.write(to: CachePaths.cacheFileURL, options: .atomic)
+    } catch {
+        // Cache writes should never break the action; ignore failures silently.
+    }
+}
+
+private func buildCachedPayload(from evolution: SwiftEvolution, etag: String?, lastModified: String?) -> CachePayload {
+    let proposals = evolution.proposals.map { dto -> CachedProposal in
+        let proposal = Proposal(dto: dto)
+        return CachedProposal(
+            item: LBItem(proposal: proposal),
+            searchText: proposal.searchText,
+            number: proposal.number
+        )
+    }
+    return CachePayload(etag: etag, lastModified: lastModified, cachedAt: Date(), proposals: proposals)
+}
+
+private func matchesQuery(_ query: String, number: Int?, searchText: String) -> Bool {
+    let words = query
+        .split { $0.isWhitespace || $0.isNewline }
+        .map { $0.lowercased() }
+    if words.isEmpty { return true }
+    if words.count == 1, let queryNumber = Int(words[0]) {
+        return number == queryNumber
+    }
+    return words.contains { searchText.contains($0) }
+}
+
+private enum FetchResult {
+    case notModified
+    case newData(Data, etag: String?, lastModified: String?)
+}
+
+private func fetchEvolution(etag: String?, lastModified: String?) async throws -> FetchResult {
+    debugLog("Starting fetch; etag=\(etag ?? "nil"), lastModified=\(lastModified ?? "nil")")
+    var request = URLRequest(url: SwiftEvolution.dataURL)
+    request.timeoutInterval = 8
+    if let etag {
+        request.addValue(etag, forHTTPHeaderField: "If-None-Match")
+    }
+    if let lastModified {
+        request.addValue(lastModified, forHTTPHeaderField: "If-Modified-Since")
+    }
+
+    let signpostID = signposter.makeSignpostID()
+    let state = signposter.beginInterval("fetchEvolution", id: signpostID, "etag=\(etag ?? "nil"), lm=\(lastModified ?? "nil")")
+    let (data, response) = try await URLSession.shared.data(for: request)
+    signposter.endInterval("fetchEvolution", state)
+
+    guard let httpResponse = response as? HTTPURLResponse else {
+        throw URLError(.badServerResponse)
+    }
+
+    let responseETag = httpResponse.value(forHTTPHeaderField: "Etag")
+    let responseLastModified = httpResponse.value(forHTTPHeaderField: "Last-Modified")
+
+    switch httpResponse.statusCode {
+    case 304:
+        debugLog("Fetch 304 Not Modified")
+        return .notModified
+    case 200:
+        debugLog("Fetch 200 OK, bytes=\(data.count), etag=\(responseETag ?? "nil"), lm=\(responseLastModified ?? "nil")")
+        return .newData(data, etag: responseETag, lastModified: responseLastModified)
+    default:
+        debugLog("Fetch error status=\(httpResponse.statusCode)")
+        throw URLError(.badServerResponse)
+    }
+}
+
+private func resolveResult(for query: String) async -> [LBItem] {
+    do {
+        let cache = loadCache()
+        debugLog("Loaded cache: \(cache?.proposals.count ?? 0) proposals; etag=\(cache?.etag ?? "nil"), lm=\(cache?.lastModified ?? "nil")")
+
+        let payload: CachePayload
+        do {
+            let fetchResult = try await fetchEvolution(etag: cache?.etag, lastModified: cache?.lastModified)
+            switch fetchResult {
+            case .notModified:
+                if let cache {
+                    debugLog("Using cached payload (not modified)")
+                    payload = cache
+                } else {
+                    throw URLError(.badServerResponse)
+                }
+            case .newData(let data, let etag, let lastModified):
+                if let cache, let etag, etag == cache.etag {
+                    debugLog("Received 200 with matching ETag; reusing cache")
+                    payload = cache
+                    break
+                }
+                if let cache, let lastModified, lastModified == cache.lastModified {
+                    debugLog("Received 200 with matching Last-Modified; reusing cache")
+                    payload = cache
+                    break
+                }
+                let decoder = JSONDecoder()
+                let swiftEvolution = try decoder.decode(SwiftEvolution.self, from: data)
+                let builtPayload = buildCachedPayload(from: swiftEvolution, etag: etag, lastModified: lastModified)
+                saveCache(builtPayload)
+                debugLog("Saved new cache with \(builtPayload.proposals.count) proposals; etag=\(etag ?? "nil"), lm=\(lastModified ?? "nil")")
+                payload = builtPayload
+            }
+        } catch {
+            if let cache {
+                debugLog("Fetch failed; falling back to cache: \(error.localizedDescription)")
+                payload = cache
+            } else {
+                throw error
+            }
+        }
+
+        let filtered = payload.proposals
+            .filter { matchesQuery(query, number: $0.number, searchText: $0.searchText) }
+            .sorted { ($0.number ?? 0) > ($1.number ?? 0) }
+            .map(\.item)
+        debugLog("Filtered \(filtered.count) results for query=\(query)")
+        return filtered
+    } catch {
+        debugLog("Returning error item: \(error.localizedDescription)")
+        return [LBItem(error: error)]
+    }
+}
+
+// MARK: - Main program
+let options = parseCommandLine(Array(CommandLine.arguments.dropFirst()))
+if options.help {
+    print("""
+    Usage: main.swift [--debug|-d] [--help|-h] [query...]
+      --debug, -d   Enable verbose logging
+      --help, -h    Show this help message
+    """)
+    exit(0)
+}
+DebugLogging.enabled = DebugLogging.enabled || options.debug
+debugLog("Debug logging enabled via \(options.debug ? "flag" : "environment")")
+
+let result = await resolveResult(for: options.query)
 
 let encoder = JSONEncoder()
 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-let resultData = try encoder.encode(result)
-print(String(decoding: resultData, as: UTF8.self))
+
+do {
+    let resultData = try encoder.encode(result)
+    print(String(decoding: resultData, as: UTF8.self))
+} catch {
+    let fallback = [LBItem(error: error)]
+    let fallbackData = (try? encoder.encode(fallback)) ?? Data()
+    print(String(decoding: fallbackData, as: UTF8.self))
+}
