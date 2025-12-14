@@ -31,9 +31,3 @@ Or by proposal status:
 Or by keyword:
 
 ![Filter by keyword](screenshots/filter-keyword.png)
-
-Available actions:
-
-* Press Return to open the proposal in the browser.
-* Hold down Command to copy the proposal title to the clipboard.
-* Hold down Shift+Command to copy a Markdown link to the proposal to the clipboard.
