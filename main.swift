@@ -246,21 +246,3 @@ let encoder = JSONEncoder()
 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 let resultData = try encoder.encode(result)
 print(String(decoding: resultData, as: UTF8.self))
-
-// ---
-
-// Note: The first argument is the script's path, ignore it:
-// let arguments = Array(CommandLine.arguments.dropFirst())
-// var items = arguments.map { ["title": $0] }
-// items.insert(["title": "\(arguments.count) arguments passed"], at: 0)
-// 
-// do {
-//     let data = try JSONSerialization.data(withJSONObject: items, options: .prettyPrinted)
-//     if let string = String(data: data, encoding: .utf8) {
-//         print(string)
-//     } else {
-//         NSLog("Error converting JSON data to UTF-8 string")
-//     }
-// } catch {
-//     NSLog("Error converting data to JSON: \(error)")
-// }
