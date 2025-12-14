@@ -23,11 +23,13 @@ struct CommandLineOptions {
     var query: String
     var debug: Bool
     var help: Bool
+    var clearCache: Bool
 }
 
 private func parseCommandLine(_ arguments: [String]) -> CommandLineOptions {
     var debug = false
     var help = false
+    var clearCache = false
     var queryParts: [String] = []
 
     for arg in arguments {
@@ -36,12 +38,14 @@ private func parseCommandLine(_ arguments: [String]) -> CommandLineOptions {
             debug = true
         case "--help", "-h":
             help = true
+        case "--clear-cache", "-c":
+            clearCache = true
         default:
             queryParts.append(arg)
         }
     }
 
-    return CommandLineOptions(query: queryParts.joined(separator: " "), debug: debug, help: help)
+    return CommandLineOptions(query: queryParts.joined(separator: " "), debug: debug, help: help, clearCache: clearCache)
 }
 
 struct SwiftEvolution: Decodable {
@@ -303,6 +307,25 @@ private func saveCache(_ payload: CachePayload) {
     }
 }
 
+private func clearCache() {
+    do {
+        if FileManager.default.fileExists(atPath: CachePaths.cacheFileURL.path) {
+            try FileManager.default.removeItem(at: CachePaths.cacheFileURL)
+            debugLog("Cleared cache file at \(CachePaths.cacheFileURL.path)")
+        } else {
+            debugLog("No cache file to clear")
+        }
+        if let contents = try? FileManager.default.contentsOfDirectory(atPath: CachePaths.directory.path),
+            contents.isEmpty
+        {
+            try FileManager.default.removeItem(at: CachePaths.directory)
+            debugLog("Removed empty cache directory")
+        }
+    } catch {
+        debugLog("Failed to clear cache: \(error.localizedDescription)")
+    }
+}
+
 private func buildCachedPayload(from evolution: SwiftEvolution, etag: String?, lastModified: String?) -> CachePayload {
     let proposals = evolution.proposals.map { dto -> CachedProposal in
         let proposal = Proposal(dto: dto)
@@ -426,14 +449,19 @@ private func resolveResult(for query: String) async -> [LBItem] {
 let options = parseCommandLine(Array(CommandLine.arguments.dropFirst()))
 if options.help {
     print("""
-    Usage: main.swift [--debug|-d] [--help|-h] [query...]
-      --debug, -d   Enable verbose logging
-      --help, -h    Show this help message
+    Usage: main.swift [--debug|-d] [--help|-h] [--clear-cache|-c] [query...]
+      --debug, -d        Enable verbose logging
+      --help, -h         Show this help message
+      --clear-cache, -c  Delete cached evolution data before fetching
     """)
     exit(0)
 }
 DebugLogging.enabled = DebugLogging.enabled || options.debug
 debugLog("Debug logging enabled via \(options.debug ? "flag" : "environment")")
+
+if options.clearCache {
+    clearCache()
+}
 
 let result = await resolveResult(for: options.query)
 
