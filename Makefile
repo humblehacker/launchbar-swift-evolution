@@ -13,9 +13,7 @@ VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
 
 all: build
 
-build:
-	@echo "Building se-lookup executable with Swift Package Manager..."
-	swift build -c release
+build: main
 	@echo "Assembling LaunchBar action bundle..."
 	rm -rf "$(BUNDLE_NAME)"
 	mkdir -p "$(SCRIPTS_PATH)"
@@ -24,6 +22,10 @@ build:
 	cp icon.png "$(RESOURCES_PATH)"
 	cp Info.plist "$(INFO_PLIST)"
 	@echo "LaunchBar action built successfully at: $(BUNDLE_NAME)"
+
+main:
+	@echo "Building main executable with Swift Package Manager..."
+	swift build -c release
 
 clean:
 	swift package clean
