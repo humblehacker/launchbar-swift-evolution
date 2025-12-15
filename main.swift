@@ -20,7 +20,7 @@ struct App {
     }
 
     init(arguments: [String] = Array(CommandLine.arguments.dropFirst())) {
-        options = parseCommandLine(arguments)
+        options = CommandLineOptions(arguments: arguments)
         isLoggingEnabled = ProcessInfo.processInfo.environment["SWIFT_EV_LOG_DEBUG"] != nil || options.debug
     }
 }
@@ -32,26 +32,28 @@ struct CommandLineOptions {
     var clearCache: Bool
 }
 
-private func parseCommandLine(_ arguments: [String]) -> CommandLineOptions {
-    var debug = false
-    var help = false
-    var clearCache = false
-    var queryParts: [String] = []
+extension CommandLineOptions {
+    init(arguments: [String]) {
+        var debug = false
+        var help = false
+        var clearCache = false
+        var queryParts: [String] = []
 
-    for arg in arguments {
-        switch arg {
-        case "--debug", "-d":
-            debug = true
-        case "--help", "-h":
-            help = true
-        case "--clear-cache", "-c":
-            clearCache = true
-        default:
-            queryParts.append(arg)
+        for arg in arguments {
+            switch arg {
+                case "--debug", "-d":
+                debug = true
+                case "--help", "-h":
+                help = true
+                case "--clear-cache", "-c":
+                clearCache = true
+                default:
+                queryParts.append(arg)
+            }
         }
-    }
 
-    return CommandLineOptions(query: queryParts.joined(separator: " "), debug: debug, help: help, clearCache: clearCache)
+        self = CommandLineOptions(query: queryParts.joined(separator: " "), debug: debug, help: help, clearCache: clearCache)
+    }
 }
 
 struct SwiftEvolution: Decodable {
