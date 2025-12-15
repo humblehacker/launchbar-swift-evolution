@@ -6,31 +6,24 @@ import Foundation
 import os
 
 struct App {
-    static let logger = Logger(subsystem: "launchbar-swift-evolution", category: "main")
-    static let signposter = OSSignposter(subsystem: "launchbar-swift-evolution", category: "network")
-    static let environmentDebugLoggingEnabled = ProcessInfo.processInfo.environment["SWIFT_EV_LOG_DEBUG"] != nil
+    let logger = Logger(subsystem: "launchbar-swift-evolution", category: "main")
+    let signposter = OSSignposter(subsystem: "launchbar-swift-evolution", category: "network")
 
-    struct DebugLogger {
-        let isEnabled: Bool
-
-        func log(_ message: @autoclosure () -> String) {
-            guard isEnabled else { return }
-            let text = message()
-            App.logger.debug("\(text)")
-            fputs("[debug] \(text)\n", stderr)
-        }
-    }
-
+    let isLoggingEnabled: Bool
     let options: CommandLineOptions
-    let debugLogger: DebugLogger
+
+    func log(_ message: @autoclosure () -> String) {
+        guard isLoggingEnabled else { return }
+        let text = message()
+        logger.debug("\(text)")
+        fputs("[debug] \(text)\n", stderr)
+    }
 
     init(arguments: [String] = Array(CommandLine.arguments.dropFirst())) {
         options = parseCommandLine(arguments)
-        debugLogger = DebugLogger(isEnabled: Self.environmentDebugLoggingEnabled || options.debug)
+        isLoggingEnabled = ProcessInfo.processInfo.environment["SWIFT_EV_LOG_DEBUG"] != nil || options.debug
     }
 }
-
-typealias DebugLogger = App.DebugLogger
 
 struct CommandLineOptions {
     var query: String
@@ -326,18 +319,18 @@ private extension App {
         do {
             if FileManager.default.fileExists(atPath: CachePaths.cacheFileURL.path) {
                 try FileManager.default.removeItem(at: CachePaths.cacheFileURL)
-                debugLogger.log("Cleared cache file at \(CachePaths.cacheFileURL.path)")
+                log("Cleared cache file at \(CachePaths.cacheFileURL.path)")
             } else {
-                debugLogger.log("No cache file to clear")
+                log("No cache file to clear")
             }
             if let contents = try? FileManager.default.contentsOfDirectory(atPath: CachePaths.directory.path),
                 contents.isEmpty
             {
                 try FileManager.default.removeItem(at: CachePaths.directory)
-                debugLogger.log("Removed empty cache directory")
+                log("Removed empty cache directory")
             }
         } catch {
-            debugLogger.log("Failed to clear cache: \(error.localizedDescription)")
+            log("Failed to clear cache: \(error.localizedDescription)")
         }
     }
 
@@ -365,7 +358,7 @@ private extension App {
     }
 
     func fetchEvolution(etag: String?, lastModified: String?) async throws -> FetchResult {
-        debugLogger.log("Starting fetch; etag=\(etag ?? "nil"), lastModified=\(lastModified ?? "nil")")
+        log("Starting fetch; etag=\(etag ?? "nil"), lastModified=\(lastModified ?? "nil")")
         var request = URLRequest(url: SwiftEvolution.dataURL)
         request.timeoutInterval = 8
         if let etag {
@@ -375,10 +368,10 @@ private extension App {
             request.addValue(lastModified, forHTTPHeaderField: "If-Modified-Since")
         }
 
-        let signpostID = App.signposter.makeSignpostID()
-        let state = App.signposter.beginInterval("fetchEvolution", id: signpostID, "etag=\(etag ?? "nil"), lm=\(lastModified ?? "nil")")
+        let signpostID = signposter.makeSignpostID()
+        let state = signposter.beginInterval("fetchEvolution", id: signpostID, "etag=\(etag ?? "nil"), lm=\(lastModified ?? "nil")")
         let (data, response) = try await URLSession.shared.data(for: request)
-        App.signposter.endInterval("fetchEvolution", state)
+        signposter.endInterval("fetchEvolution", state)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
@@ -389,13 +382,13 @@ private extension App {
 
         switch httpResponse.statusCode {
         case 304:
-            debugLogger.log("Fetch 304 Not Modified")
+            log("Fetch 304 Not Modified")
             return .notModified
         case 200:
-            debugLogger.log("Fetch 200 OK, bytes=\(data.count), etag=\(responseETag ?? "nil"), lm=\(responseLastModified ?? "nil")")
+            log("Fetch 200 OK, bytes=\(data.count), etag=\(responseETag ?? "nil"), lm=\(responseLastModified ?? "nil")")
             return .newData(data, etag: responseETag, lastModified: responseLastModified)
         default:
-            debugLogger.log("Fetch error status=\(httpResponse.statusCode)")
+            log("Fetch error status=\(httpResponse.statusCode)")
             throw URLError(.badServerResponse)
         }
     }
@@ -403,7 +396,7 @@ private extension App {
     func resolveResult(for query: String) async -> [LBItem] {
         do {
             let cache = loadCache()
-            debugLogger.log("Loaded cache: \(cache?.proposals.count ?? 0) proposals; etag=\(cache?.etag ?? "nil"), lm=\(cache?.lastModified ?? "nil")")
+            log("Loaded cache: \(cache?.proposals.count ?? 0) proposals; etag=\(cache?.etag ?? "nil"), lm=\(cache?.lastModified ?? "nil")")
 
             let payload: CachePayload
             do {
@@ -411,19 +404,19 @@ private extension App {
                 switch fetchResult {
                 case .notModified:
                     if let cache {
-                        debugLogger.log("Using cached payload (not modified)")
+                        log("Using cached payload (not modified)")
                         payload = cache
                     } else {
                         throw URLError(.badServerResponse)
                     }
                 case .newData(let data, let etag, let lastModified):
                     if let cache, let etag, etag == cache.etag {
-                        debugLogger.log("Received 200 with matching ETag; reusing cache")
+                        log("Received 200 with matching ETag; reusing cache")
                         payload = cache
                         break
                     }
                     if let cache, let lastModified, lastModified == cache.lastModified {
-                        debugLogger.log("Received 200 with matching Last-Modified; reusing cache")
+                        log("Received 200 with matching Last-Modified; reusing cache")
                         payload = cache
                         break
                     }
@@ -431,12 +424,12 @@ private extension App {
                     let swiftEvolution = try decoder.decode(SwiftEvolution.self, from: data)
                     let builtPayload = buildCachedPayload(from: swiftEvolution, etag: etag, lastModified: lastModified)
                     saveCache(builtPayload)
-                    debugLogger.log("Saved new cache with \(builtPayload.proposals.count) proposals; etag=\(etag ?? "nil"), lm=\(lastModified ?? "nil")")
+                    log("Saved new cache with \(builtPayload.proposals.count) proposals; etag=\(etag ?? "nil"), lm=\(lastModified ?? "nil")")
                     payload = builtPayload
                 }
             } catch {
                 if let cache {
-                    debugLogger.log("Fetch failed; falling back to cache: \(error.localizedDescription)")
+                    log("Fetch failed; falling back to cache: \(error.localizedDescription)")
                     payload = cache
                 } else {
                     throw error
@@ -447,10 +440,10 @@ private extension App {
                 .filter { Self.matchesQuery(query, number: $0.number, searchText: $0.searchText) }
                 .sorted { ($0.number ?? 0) > ($1.number ?? 0) }
                 .map(\.item)
-            debugLogger.log("Filtered \(filtered.count) results for query=\(query)")
+            log("Filtered \(filtered.count) results for query=\(query)")
             return filtered
         } catch {
-            debugLogger.log("Returning error item: \(error.localizedDescription)")
+            log("Returning error item: \(error.localizedDescription)")
             return [LBItem(error: error)]
         }
     }
@@ -469,7 +462,7 @@ extension App {
             exit(0)
         }
 
-        debugLogger.log("Debug logging enabled via \(options.debug ? "flag" : "environment")")
+        log("Debug logging enabled via \(options.debug ? "flag" : "environment")")
 
         if options.clearCache {
             clearCache()
