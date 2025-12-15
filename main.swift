@@ -5,21 +5,24 @@
 import Foundation
 import os
 
-private let logger = Logger(subsystem: "launchbar-swift-evolution", category: "main")
-private let signposter = OSSignposter(subsystem: "launchbar-swift-evolution", category: "network")
+struct App {
+    static let logger = Logger(subsystem: "launchbar-swift-evolution", category: "main")
+    static let signposter = OSSignposter(subsystem: "launchbar-swift-evolution", category: "network")
+    static let environmentDebugLoggingEnabled = ProcessInfo.processInfo.environment["SWIFT_EV_LOG_DEBUG"] != nil
 
-private let environmentDebugLoggingEnabled = ProcessInfo.processInfo.environment["SWIFT_EV_LOG_DEBUG"] != nil
+    struct DebugLogger {
+        let isEnabled: Bool
 
-private struct DebugLogger {
-    let isEnabled: Bool
-
-    func log(_ message: @autoclosure () -> String) {
-        guard isEnabled else { return }
-        let text = message()
-        logger.debug("\(text)")
-        fputs("[debug] \(text)\n", stderr)
+        func log(_ message: @autoclosure () -> String) {
+            guard isEnabled else { return }
+            let text = message()
+            App.logger.debug("\(text)")
+            fputs("[debug] \(text)\n", stderr)
+        }
     }
 }
+
+typealias DebugLogger = App.DebugLogger
 
 struct CommandLineOptions {
     var query: String
@@ -367,10 +370,10 @@ private func fetchEvolution(etag: String?, lastModified: String?, logger: DebugL
         request.addValue(lastModified, forHTTPHeaderField: "If-Modified-Since")
     }
 
-    let signpostID = signposter.makeSignpostID()
-    let state = signposter.beginInterval("fetchEvolution", id: signpostID, "etag=\(etag ?? "nil"), lm=\(lastModified ?? "nil")")
+    let signpostID = App.signposter.makeSignpostID()
+    let state = App.signposter.beginInterval("fetchEvolution", id: signpostID, "etag=\(etag ?? "nil"), lm=\(lastModified ?? "nil")")
     let (data, response) = try await URLSession.shared.data(for: request)
-    signposter.endInterval("fetchEvolution", state)
+    App.signposter.endInterval("fetchEvolution", state)
 
     guard let httpResponse = response as? HTTPURLResponse else {
         throw URLError(.badServerResponse)
@@ -448,33 +451,39 @@ private func resolveResult(for query: String, logger: DebugLogger) async -> [LBI
 }
 
 // MARK: - Main program
-let options = parseCommandLine(Array(CommandLine.arguments.dropFirst()))
-if options.help {
-    print("""
-    Usage: main.swift [--debug|-d] [--help|-h] [--clear-cache|-c] [query...]
-      --debug, -d        Enable verbose logging
-      --help, -h         Show this help message
-      --clear-cache, -c  Delete cached evolution data before fetching
-    """)
-    exit(0)
+extension App {
+    static func run() async {
+        let options = parseCommandLine(Array(CommandLine.arguments.dropFirst()))
+        if options.help {
+            print("""
+            Usage: main.swift [--debug|-d] [--help|-h] [--clear-cache|-c] [query...]
+              --debug, -d        Enable verbose logging
+              --help, -h         Show this help message
+              --clear-cache, -c  Delete cached evolution data before fetching
+            """)
+            exit(0)
+        }
+        let debugLogger = DebugLogger(isEnabled: environmentDebugLoggingEnabled || options.debug)
+        debugLogger.log("Debug logging enabled via \(options.debug ? "flag" : "environment")")
+
+        if options.clearCache {
+            clearCache(logger: debugLogger)
+        }
+
+        let result = await resolveResult(for: options.query, logger: debugLogger)
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+        do {
+            let resultData = try encoder.encode(result)
+            print(String(decoding: resultData, as: UTF8.self))
+        } catch {
+            let fallback = [LBItem(error: error)]
+            let fallbackData = (try? encoder.encode(fallback)) ?? Data()
+            print(String(decoding: fallbackData, as: UTF8.self))
+        }
+    }
 }
-private let debugLogger = DebugLogger(isEnabled: environmentDebugLoggingEnabled || options.debug)
-debugLogger.log("Debug logging enabled via \(options.debug ? "flag" : "environment")")
 
-if options.clearCache {
-    clearCache(logger: debugLogger)
-}
-
-let result = await resolveResult(for: options.query, logger: debugLogger)
-
-let encoder = JSONEncoder()
-encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-
-do {
-    let resultData = try encoder.encode(result)
-    print(String(decoding: resultData, as: UTF8.self))
-} catch {
-    let fallback = [LBItem(error: error)]
-    let fallbackData = (try? encoder.encode(fallback)) ?? Data()
-    print(String(decoding: fallbackData, as: UTF8.self))
-}
+await App.run()
