@@ -20,6 +20,14 @@ struct App {
             fputs("[debug] \(text)\n", stderr)
         }
     }
+
+    let options: CommandLineOptions
+    let debugLogger: DebugLogger
+
+    init(arguments: [String] = Array(CommandLine.arguments.dropFirst())) {
+        options = parseCommandLine(arguments)
+        debugLogger = DebugLogger(isEnabled: Self.environmentDebugLoggingEnabled || options.debug)
+    }
 }
 
 typealias DebugLogger = App.DebugLogger
@@ -117,10 +125,6 @@ struct Proposal {
     var searchText: String {
         "\(id) \(number.map(String.init(describing:)) ?? "") \(title) \(status.description) \(upcomingFeatureFlag?.flag ?? "")"
             .lowercased()
-    }
-
-    func matches(_ query: String) -> Bool {
-        matchesQuery(query, number: number, searchText: searchText)
     }
 }
 
@@ -293,167 +297,168 @@ private struct CachePayload: Codable {
 
 // MARK: - Cache helpers
 
-private func loadCache() -> CachePayload? {
-    guard let data = try? Data(contentsOf: CachePaths.cacheFileURL) else { return nil }
-    let decoder = JSONDecoder()
-    decoder.dateDecodingStrategy = .iso8601
-    return try? decoder.decode(CachePayload.self, from: data)
-}
-
-private func saveCache(_ payload: CachePayload) {
-    do {
-        try FileManager.default.createDirectory(at: CachePaths.directory, withIntermediateDirectories: true)
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(payload)
-        try data.write(to: CachePaths.cacheFileURL, options: .atomic)
-    } catch {
-        // Cache writes should never break the action; ignore failures silently.
-    }
-}
-
-private func clearCache(logger: DebugLogger) {
-    do {
-        if FileManager.default.fileExists(atPath: CachePaths.cacheFileURL.path) {
-            try FileManager.default.removeItem(at: CachePaths.cacheFileURL)
-            logger.log("Cleared cache file at \(CachePaths.cacheFileURL.path)")
-        } else {
-            logger.log("No cache file to clear")
-        }
-        if let contents = try? FileManager.default.contentsOfDirectory(atPath: CachePaths.directory.path),
-            contents.isEmpty
-        {
-            try FileManager.default.removeItem(at: CachePaths.directory)
-            logger.log("Removed empty cache directory")
-        }
-    } catch {
-        logger.log("Failed to clear cache: \(error.localizedDescription)")
-    }
-}
-
-private func buildCachedPayload(from evolution: SwiftEvolution, etag: String?, lastModified: String?) -> CachePayload {
-    let proposals = evolution.proposals.map { dto -> CachedProposal in
-        let proposal = Proposal(dto: dto)
-        return CachedProposal(
-            item: LBItem(proposal: proposal),
-            searchText: proposal.searchText,
-            number: proposal.number
-        )
-    }
-    return CachePayload(etag: etag, lastModified: lastModified, cachedAt: Date(), proposals: proposals)
-}
-
-private func matchesQuery(_ query: String, number: Int?, searchText: String) -> Bool {
-    let words = query
-        .split { $0.isWhitespace || $0.isNewline }
-        .map { $0.lowercased() }
-    if words.isEmpty { return true }
-    if words.count == 1, let queryNumber = Int(words[0]) {
-        return number == queryNumber
-    }
-    return words.contains { searchText.contains($0) }
-}
-
 private enum FetchResult {
     case notModified
     case newData(Data, etag: String?, lastModified: String?)
 }
 
-private func fetchEvolution(etag: String?, lastModified: String?, logger: DebugLogger) async throws -> FetchResult {
-    logger.log("Starting fetch; etag=\(etag ?? "nil"), lastModified=\(lastModified ?? "nil")")
-    var request = URLRequest(url: SwiftEvolution.dataURL)
-    request.timeoutInterval = 8
-    if let etag {
-        request.addValue(etag, forHTTPHeaderField: "If-None-Match")
-    }
-    if let lastModified {
-        request.addValue(lastModified, forHTTPHeaderField: "If-Modified-Since")
+private extension App {
+    func loadCache() -> CachePayload? {
+        guard let data = try? Data(contentsOf: CachePaths.cacheFileURL) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(CachePayload.self, from: data)
     }
 
-    let signpostID = App.signposter.makeSignpostID()
-    let state = App.signposter.beginInterval("fetchEvolution", id: signpostID, "etag=\(etag ?? "nil"), lm=\(lastModified ?? "nil")")
-    let (data, response) = try await URLSession.shared.data(for: request)
-    App.signposter.endInterval("fetchEvolution", state)
-
-    guard let httpResponse = response as? HTTPURLResponse else {
-        throw URLError(.badServerResponse)
-    }
-
-    let responseETag = httpResponse.value(forHTTPHeaderField: "Etag")
-    let responseLastModified = httpResponse.value(forHTTPHeaderField: "Last-Modified")
-
-    switch httpResponse.statusCode {
-    case 304:
-        logger.log("Fetch 304 Not Modified")
-        return .notModified
-    case 200:
-        logger.log("Fetch 200 OK, bytes=\(data.count), etag=\(responseETag ?? "nil"), lm=\(responseLastModified ?? "nil")")
-        return .newData(data, etag: responseETag, lastModified: responseLastModified)
-    default:
-        logger.log("Fetch error status=\(httpResponse.statusCode)")
-        throw URLError(.badServerResponse)
-    }
-}
-
-private func resolveResult(for query: String, logger: DebugLogger) async -> [LBItem] {
-    do {
-        let cache = loadCache()
-        logger.log("Loaded cache: \(cache?.proposals.count ?? 0) proposals; etag=\(cache?.etag ?? "nil"), lm=\(cache?.lastModified ?? "nil")")
-
-        let payload: CachePayload
+    func saveCache(_ payload: CachePayload) {
         do {
-            let fetchResult = try await fetchEvolution(etag: cache?.etag, lastModified: cache?.lastModified, logger: logger)
-            switch fetchResult {
-            case .notModified:
-                if let cache {
-                    logger.log("Using cached payload (not modified)")
-                    payload = cache
-                } else {
-                    throw URLError(.badServerResponse)
-                }
-            case .newData(let data, let etag, let lastModified):
-                if let cache, let etag, etag == cache.etag {
-                    logger.log("Received 200 with matching ETag; reusing cache")
-                    payload = cache
-                    break
-                }
-                if let cache, let lastModified, lastModified == cache.lastModified {
-                    logger.log("Received 200 with matching Last-Modified; reusing cache")
-                    payload = cache
-                    break
-                }
-                let decoder = JSONDecoder()
-                let swiftEvolution = try decoder.decode(SwiftEvolution.self, from: data)
-                let builtPayload = buildCachedPayload(from: swiftEvolution, etag: etag, lastModified: lastModified)
-                saveCache(builtPayload)
-                logger.log("Saved new cache with \(builtPayload.proposals.count) proposals; etag=\(etag ?? "nil"), lm=\(lastModified ?? "nil")")
-                payload = builtPayload
+            try FileManager.default.createDirectory(at: CachePaths.directory, withIntermediateDirectories: true)
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(payload)
+            try data.write(to: CachePaths.cacheFileURL, options: .atomic)
+        } catch {
+            // Cache writes should never break the action; ignore failures silently.
+        }
+    }
+
+    func clearCache() {
+        do {
+            if FileManager.default.fileExists(atPath: CachePaths.cacheFileURL.path) {
+                try FileManager.default.removeItem(at: CachePaths.cacheFileURL)
+                debugLogger.log("Cleared cache file at \(CachePaths.cacheFileURL.path)")
+            } else {
+                debugLogger.log("No cache file to clear")
+            }
+            if let contents = try? FileManager.default.contentsOfDirectory(atPath: CachePaths.directory.path),
+                contents.isEmpty
+            {
+                try FileManager.default.removeItem(at: CachePaths.directory)
+                debugLogger.log("Removed empty cache directory")
             }
         } catch {
-            if let cache {
-                logger.log("Fetch failed; falling back to cache: \(error.localizedDescription)")
-                payload = cache
-            } else {
-                throw error
-            }
+            debugLogger.log("Failed to clear cache: \(error.localizedDescription)")
+        }
+    }
+
+    func buildCachedPayload(from evolution: SwiftEvolution, etag: String?, lastModified: String?) -> CachePayload {
+        let proposals = evolution.proposals.map { dto -> CachedProposal in
+            let proposal = Proposal(dto: dto)
+            return CachedProposal(
+                item: LBItem(proposal: proposal),
+                searchText: proposal.searchText,
+                number: proposal.number
+            )
+        }
+        return CachePayload(etag: etag, lastModified: lastModified, cachedAt: Date(), proposals: proposals)
+    }
+
+    static func matchesQuery(_ query: String, number: Int?, searchText: String) -> Bool {
+        let words = query
+            .split { $0.isWhitespace || $0.isNewline }
+            .map { $0.lowercased() }
+        if words.isEmpty { return true }
+        if words.count == 1, let queryNumber = Int(words[0]) {
+            return number == queryNumber
+        }
+        return words.contains { searchText.contains($0) }
+    }
+
+    func fetchEvolution(etag: String?, lastModified: String?) async throws -> FetchResult {
+        debugLogger.log("Starting fetch; etag=\(etag ?? "nil"), lastModified=\(lastModified ?? "nil")")
+        var request = URLRequest(url: SwiftEvolution.dataURL)
+        request.timeoutInterval = 8
+        if let etag {
+            request.addValue(etag, forHTTPHeaderField: "If-None-Match")
+        }
+        if let lastModified {
+            request.addValue(lastModified, forHTTPHeaderField: "If-Modified-Since")
         }
 
-        let filtered = payload.proposals
-            .filter { matchesQuery(query, number: $0.number, searchText: $0.searchText) }
-            .sorted { ($0.number ?? 0) > ($1.number ?? 0) }
-            .map(\.item)
-        logger.log("Filtered \(filtered.count) results for query=\(query)")
-        return filtered
-    } catch {
-        logger.log("Returning error item: \(error.localizedDescription)")
-        return [LBItem(error: error)]
+        let signpostID = App.signposter.makeSignpostID()
+        let state = App.signposter.beginInterval("fetchEvolution", id: signpostID, "etag=\(etag ?? "nil"), lm=\(lastModified ?? "nil")")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        App.signposter.endInterval("fetchEvolution", state)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+
+        let responseETag = httpResponse.value(forHTTPHeaderField: "Etag")
+        let responseLastModified = httpResponse.value(forHTTPHeaderField: "Last-Modified")
+
+        switch httpResponse.statusCode {
+        case 304:
+            debugLogger.log("Fetch 304 Not Modified")
+            return .notModified
+        case 200:
+            debugLogger.log("Fetch 200 OK, bytes=\(data.count), etag=\(responseETag ?? "nil"), lm=\(responseLastModified ?? "nil")")
+            return .newData(data, etag: responseETag, lastModified: responseLastModified)
+        default:
+            debugLogger.log("Fetch error status=\(httpResponse.statusCode)")
+            throw URLError(.badServerResponse)
+        }
+    }
+
+    func resolveResult(for query: String) async -> [LBItem] {
+        do {
+            let cache = loadCache()
+            debugLogger.log("Loaded cache: \(cache?.proposals.count ?? 0) proposals; etag=\(cache?.etag ?? "nil"), lm=\(cache?.lastModified ?? "nil")")
+
+            let payload: CachePayload
+            do {
+                let fetchResult = try await fetchEvolution(etag: cache?.etag, lastModified: cache?.lastModified)
+                switch fetchResult {
+                case .notModified:
+                    if let cache {
+                        debugLogger.log("Using cached payload (not modified)")
+                        payload = cache
+                    } else {
+                        throw URLError(.badServerResponse)
+                    }
+                case .newData(let data, let etag, let lastModified):
+                    if let cache, let etag, etag == cache.etag {
+                        debugLogger.log("Received 200 with matching ETag; reusing cache")
+                        payload = cache
+                        break
+                    }
+                    if let cache, let lastModified, lastModified == cache.lastModified {
+                        debugLogger.log("Received 200 with matching Last-Modified; reusing cache")
+                        payload = cache
+                        break
+                    }
+                    let decoder = JSONDecoder()
+                    let swiftEvolution = try decoder.decode(SwiftEvolution.self, from: data)
+                    let builtPayload = buildCachedPayload(from: swiftEvolution, etag: etag, lastModified: lastModified)
+                    saveCache(builtPayload)
+                    debugLogger.log("Saved new cache with \(builtPayload.proposals.count) proposals; etag=\(etag ?? "nil"), lm=\(lastModified ?? "nil")")
+                    payload = builtPayload
+                }
+            } catch {
+                if let cache {
+                    debugLogger.log("Fetch failed; falling back to cache: \(error.localizedDescription)")
+                    payload = cache
+                } else {
+                    throw error
+                }
+            }
+
+            let filtered = payload.proposals
+                .filter { Self.matchesQuery(query, number: $0.number, searchText: $0.searchText) }
+                .sorted { ($0.number ?? 0) > ($1.number ?? 0) }
+                .map(\.item)
+            debugLogger.log("Filtered \(filtered.count) results for query=\(query)")
+            return filtered
+        } catch {
+            debugLogger.log("Returning error item: \(error.localizedDescription)")
+            return [LBItem(error: error)]
+        }
     }
 }
 
 // MARK: - Main program
 extension App {
-    static func run() async {
-        let options = parseCommandLine(Array(CommandLine.arguments.dropFirst()))
+    func run() async {
         if options.help {
             print("""
             Usage: main.swift [--debug|-d] [--help|-h] [--clear-cache|-c] [query...]
@@ -463,14 +468,14 @@ extension App {
             """)
             exit(0)
         }
-        let debugLogger = DebugLogger(isEnabled: environmentDebugLoggingEnabled || options.debug)
+
         debugLogger.log("Debug logging enabled via \(options.debug ? "flag" : "environment")")
 
         if options.clearCache {
-            clearCache(logger: debugLogger)
+            clearCache()
         }
 
-        let result = await resolveResult(for: options.query, logger: debugLogger)
+        let result = await resolveResult(for: options.query)
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -486,4 +491,4 @@ extension App {
     }
 }
 
-await App.run()
+await App().run()
