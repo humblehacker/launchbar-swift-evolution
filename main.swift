@@ -5,57 +5,6 @@
 import Foundation
 import os
 
-struct App {
-    let logger = Logger(subsystem: "launchbar-swift-evolution", category: "main")
-    let signposter = OSSignposter(subsystem: "launchbar-swift-evolution", category: "network")
-
-    let isLoggingEnabled: Bool
-    let options: CommandLineOptions
-
-    func log(_ message: @autoclosure () -> String) {
-        guard isLoggingEnabled else { return }
-        let text = message()
-        logger.debug("\(text)")
-        fputs("[debug] \(text)\n", stderr)
-    }
-
-    init(arguments: [String] = Array(CommandLine.arguments.dropFirst())) {
-        options = CommandLineOptions(arguments: arguments)
-        isLoggingEnabled = ProcessInfo.processInfo.environment["SWIFT_EV_LOG_DEBUG"] != nil || options.debug
-    }
-}
-
-struct CommandLineOptions {
-    var query: String
-    var debug: Bool
-    var help: Bool
-    var clearCache: Bool
-}
-
-extension CommandLineOptions {
-    init(arguments: [String]) {
-        var debug = false
-        var help = false
-        var clearCache = false
-        var queryParts: [String] = []
-
-        for arg in arguments {
-            switch arg {
-                case "--debug", "-d":
-                debug = true
-                case "--help", "-h":
-                help = true
-                case "--clear-cache", "-c":
-                clearCache = true
-                default:
-                queryParts.append(arg)
-            }
-        }
-
-        self = CommandLineOptions(query: queryParts.joined(separator: " "), debug: debug, help: help, clearCache: clearCache)
-    }
-}
-
 struct SwiftEvolution: Decodable {
     static let dataURL = URL(string: "https://download.swift.org/swift-evolution/v1/evolution.json")!
 
@@ -295,6 +244,57 @@ private struct CachePayload: Codable {
 private enum FetchResult {
     case notModified
     case newData(Data, etag: String?, lastModified: String?)
+}
+
+struct App {
+    let logger = Logger(subsystem: "launchbar-swift-evolution", category: "main")
+    let signposter = OSSignposter(subsystem: "launchbar-swift-evolution", category: "network")
+
+    let isLoggingEnabled: Bool
+    let options: CommandLineOptions
+
+    func log(_ message: @autoclosure () -> String) {
+        guard isLoggingEnabled else { return }
+        let text = message()
+        logger.debug("\(text)")
+        fputs("[debug] \(text)\n", stderr)
+    }
+
+    init(arguments: [String] = Array(CommandLine.arguments.dropFirst())) {
+        options = CommandLineOptions(arguments: arguments)
+        isLoggingEnabled = ProcessInfo.processInfo.environment["SWIFT_EV_LOG_DEBUG"] != nil || options.debug
+    }
+}
+
+struct CommandLineOptions {
+    var query: String
+    var debug: Bool
+    var help: Bool
+    var clearCache: Bool
+}
+
+extension CommandLineOptions {
+    init(arguments: [String]) {
+        var debug = false
+        var help = false
+        var clearCache = false
+        var queryParts: [String] = []
+
+        for arg in arguments {
+            switch arg {
+                case "--debug", "-d":
+                debug = true
+                case "--help", "-h":
+                help = true
+                case "--clear-cache", "-c":
+                clearCache = true
+                default:
+                queryParts.append(arg)
+            }
+        }
+
+        self = CommandLineOptions(query: queryParts.joined(separator: " "), debug: debug, help: help, clearCache: clearCache)
+    }
 }
 
 private extension App {
