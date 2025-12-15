@@ -1,14 +1,12 @@
 BUILD_PATH = .build/action
 BUNDLE_NAME = Swift Evolution.lbaction
 BUNDLE_ROOT = $(BUILD_PATH)/$(BUNDLE_NAME)
-BUNDLE_PATH = $(BUNDLE_ROOT)/Contents
-SCRIPTS_PATH = $(BUNDLE_PATH)/Scripts
-RESOURCES_PATH = $(BUNDLE_PATH)/Resources
-INFO_PLIST = $(BUNDLE_PATH)/Info.plist
-ICON = $(RESOURCES_PATH)/Swift.png
+BUNDLE_CONTENTS = $(BUNDLE_ROOT)/Contents
+SCRIPTS_PATH = $(BUNDLE_CONTENTS)/Scripts
+RESOURCES_PATH = $(BUNDLE_CONTENTS)/Resources
 INSTALL_PATH = $(HOME)/Library/Application Support/LaunchBar/Actions
-RELEASE_PATH = .build/release-bundle
-SIGN_IDENTITY ?=
+RELEASE_PACKAGE = $(BUILD_PATH)/$(BUNDLE_NAME).zip
+SIGN_IDENTITY ?= $(shell security find-identity -p codesigning -v | awk -F\" '/\"/ {print $$2}')
 VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
 
 .PHONY: all build clean install release sign
@@ -16,13 +14,14 @@ VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
 all: build
 
 build: main
+	@echo "$(SIGN_IDENTITY)"
 	@echo "Assembling LaunchBar action bundle..."
-	rm -rf "$(BUNDLE_ROOT)"
+	-rm -r "$(BUNDLE_ROOT)" 2>/dev/null
 	mkdir -p "$(SCRIPTS_PATH)"
 	cp .build/release/main "$(SCRIPTS_PATH)"
 	mkdir -p "$(RESOURCES_PATH)"
 	cp icon.png "$(RESOURCES_PATH)"
-	cp Info.plist "$(INFO_PLIST)"
+	cp Info.plist "$(BUNDLE_CONTENTS)"
 	@echo "LaunchBar action built successfully at: $(BUNDLE_ROOT)"
 
 main:
@@ -31,20 +30,19 @@ main:
 
 clean:
 	swift package clean
-	rm -rf .build
+	rm -r .build
 
 install: build sign
 	@echo "Installing to $(INSTALL_PATH)"
 	-rm -r "$(INSTALL_PATH)/$(BUNDLE_NAME)" 2>/dev/null
-	cp -Rp "$(BUILD_PATH)/$(BUNDLE_NAME)" "$(INSTALL_PATH)"
+	cp -Rp "$(BUNDLE_ROOT)" "$(INSTALL_PATH)"
 	@echo "Installed successfully. Restart LaunchBar or rescan actions to use."
 
-"$(RELEASE_PATH)/$(BUNDLE_NAME).zip": build
+"$(RELEASE_PACKAGE)": build
 	@echo "Packaging release bundle..."
-	mkdir -p "$(RELEASE_PATH)"
-	cd "$(BUILD_PATH)" && zip -r "../../$(RELEASE_PATH)/$(BUNDLE_NAME).zip" "$(BUNDLE_NAME)"
+	cd "$(BUILD_PATH)" && zip -r "$(RELEASE_PACKAGE)" "$(BUNDLE_NAME)"
 
-release: build sign "$(RELEASE_PATH)/$(BUNDLE_NAME).zip"
+release: build sign "$(RELEASE_PACKAGE)"
 	@echo "Creating release $(VERSION)..."
 	@if ! command -v gh &> /dev/null; then \
 		echo "Error: GitHub CLI (gh) is not installed. Install it with 'brew install gh'"; \
@@ -56,7 +54,7 @@ release: build sign "$(RELEASE_PATH)/$(BUNDLE_NAME).zip"
 	fi
 	@echo "Creating GitHub release..."
 	gh release create $(VERSION) \
-		"$(RELEASE_PATH)/$(BUNDLE_NAME).zip" \
+		"$(RELEASE_PACKAGE)" \
 		--title "$(VERSION)" \
 		--generate-notes
 	@echo "Release $(VERSION) published successfully!"
@@ -65,4 +63,5 @@ sign: build
 	@test -n "$(SIGN_IDENTITY)" || (echo "Set SIGN_IDENTITY to your signing identity (e.g. 'Developer ID Application: Name (TEAMID)' or 'Apple Development: Name (TEAMID)')"; exit 1)
 	@echo "Codesigning bundle with $(SIGN_IDENTITY)"
 	codesign --force --deep --options runtime --timestamp --sign "$(SIGN_IDENTITY)" "$(BUNDLE_ROOT)"
+	codesign --verify --deep --strict --verbose=2 "$(BUNDLE_ROOT)"
 	@echo "Codesign complete."
