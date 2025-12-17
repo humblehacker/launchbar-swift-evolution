@@ -92,22 +92,9 @@ pkg: sign-bundle
 	mkdir -p "$(PKG_ROOT)/Library/Application Support/LaunchBar/Actions"
 	mkdir -p "$(PKG_SCRIPTS)"
 	cp -Rp "$(BUNDLE_ROOT)" "$(PKG_ROOT)/Library/Application Support/LaunchBar/Actions/"
-	printf '%s\n' \
-		'#!/bin/bash' \
-		'set -euo pipefail' \
-		'BUNDLE_NAME="Swift Evolution.lbaction"' \
-		'SOURCE="$(PKG_STAGE_ROOT)/Library/Application Support/LaunchBar/Actions/$$BUNDLE_NAME"' \
-		'CONSOLE_USER=$$(stat -f %Su /dev/console)' \
-		'if [ "$$CONSOLE_USER" = "root" ] && [ -n "$${SUDO_USER:-}" ]; then' \
-		'  CONSOLE_USER="$$SUDO_USER"' \
-		'fi' \
-		'DEST="/Users/$$CONSOLE_USER/Library/Application Support/LaunchBar/Actions"' \
-		'mkdir -p "$$DEST"' \
-		'cp -Rp "$$SOURCE" "$$DEST/"' \
-		'chown -R "$$CONSOLE_USER" "$$DEST/$$BUNDLE_NAME"' \
-		'rm -rf "$$SOURCE"' \
-		'exit 0' \
-		> "$(PKG_SCRIPTS)/postinstall"
+	sed -e "s|@BUNDLE_NAME@|$(BUNDLE_NAME)|g" \
+		-e "s|@PKG_STAGE_ROOT@|$(PKG_STAGE_ROOT)|g" \
+		packaging/postinstall.sh > "$(PKG_SCRIPTS)/postinstall"
 	chmod +x "$(PKG_SCRIPTS)/postinstall"
 	pkgbuild \
 		--root "$(PKG_ROOT)" \
