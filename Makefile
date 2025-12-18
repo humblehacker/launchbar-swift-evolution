@@ -1,63 +1,92 @@
-BUILD_PATH = .build/action
-BUNDLE_NAME = Swift Evolution.lbaction
-BUNDLE_ROOT = $(BUILD_PATH)/$(BUNDLE_NAME)
-PKG_ROOT = $(BUILD_PATH)/pkg-root
-PKG_SCRIPTS = $(BUILD_PATH)/pkg-scripts
+ACTION_BUILD_PATH = .build/action
+MAIN_EXECUTABLE = .build/apple/Products/Release/main
+BUNDLE_NAME = SwiftEvolution.lbaction
+BUNDLE_ROOT = $(ACTION_BUILD_PATH)/$(BUNDLE_NAME)
+PKG_ROOT = $(ACTION_BUILD_PATH)/pkg-root
+PKG_SCRIPTS = $(ACTION_BUILD_PATH)/pkg-scripts
 BUNDLE_CONTENTS = $(BUNDLE_ROOT)/Contents
 SCRIPTS_PATH = $(BUNDLE_CONTENTS)/Scripts
 RESOURCES_PATH = $(BUNDLE_CONTENTS)/Resources
 DMG_NAME = Swift-Evolution.dmg
 PKG_NAME = Swift-Evolution.pkg
 INSTALL_PATH = $(HOME)/Library/Application Support/LaunchBar/Actions
-DMG_PATH = $(BUILD_PATH)/$(DMG_NAME)
-PKG_PATH = $(BUILD_PATH)/$(PKG_NAME)
+DMG_PATH = $(ACTION_BUILD_PATH)/$(DMG_NAME)
+PKG_PATH = $(ACTION_BUILD_PATH)/$(PKG_NAME)
 UNSIGNED_PKG = $(PKG_PATH).unsigned
 PKG_STAGE_ROOT = /tmp/SwiftEvolution-staging
-NOTARY_SUBMISSION = $(BUILD_PATH)/notarization.json
+NOTARY_SUBMISSION = $(ACTION_BUILD_PATH)/notarization.json
 SIGN_IDENTITY ?= $(shell security find-identity -p codesigning -v | awk -F\" '/Developer ID Application/ {print $$2; exit}')
 PKG_SIGN_IDENTITY ?= $(shell security find-identity -v | awk -F\" '/Developer ID Installer/ {print $$2; exit}')
 NOTARY_PROFILE ?=
 VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
+SIGNED_BUNDLE := $(BUNDLE_ROOT).signed
+INSTALL_STAMP := $(ACTION_BUILD_PATH)/install.stamp
 
 .ONESHELL:
 
-.PHONY: all bundle clean install release sign-bundle sign-dmg sign-pkg dmg pkg notarize-dmg notarize-pkg
+.PHONY: all clean release sign-dmg sign-pkg pkg notarize-dmg notarize-pkg
 
 all: bundle
-
-bundle: main
-	@echo "$(SIGN_IDENTITY)"
-	@echo "Assembling LaunchBar action bundle..."
-	-rm -r "$(BUNDLE_ROOT)" 2>/dev/null
-	mkdir -p "$(SCRIPTS_PATH)"
-	cp .build/apple/Products/Release/main "$(SCRIPTS_PATH)"
-	mkdir -p "$(RESOURCES_PATH)"
-	cp icon.png "$(RESOURCES_PATH)"
-	cp Info.plist "$(BUNDLE_CONTENTS)"
-	@echo "LaunchBar action built successfully at: $(BUNDLE_ROOT)"
-
-main:
-	@echo "Building main executable with Swift Package Manager..."
-	swift build -c release --arch arm64 --arch x86_64
 
 clean:
 	swift package clean
 	rm -r .build
 
-install: sign-bundle
+#install: "$(INSTALL_PATH)/$(BUNDLE_NAME)"
+#"$(INSTALL_PATH)/$(BUNDLE_NAME)": $(SIGNED_BUNDLE)
+#	@echo "Installing to $(INSTALL_PATH)"
+#	-rm -r "$(INSTALL_PATH)/$(BUNDLE_NAME)" 2>/dev/null
+#	mkdir -p "$(INSTALL_PATH)"
+#	cp -R "$(BUNDLE_ROOT)" "$(INSTALL_PATH)"
+#	touch "$(INSTALL_PATH)/$(BUNDLE_NAME)"
+#	@echo "Installed successfully. Restart LaunchBar or rescan actions to use."
+
+install: $(INSTALL_STAMP)
+$(INSTALL_STAMP): $(SIGNED_BUNDLE)
 	@echo "Installing to $(INSTALL_PATH)"
 	-rm -r "$(INSTALL_PATH)/$(BUNDLE_NAME)" 2>/dev/null
-	cp -Rp "$(BUNDLE_ROOT)" "$(INSTALL_PATH)"
+	mkdir -p "$(INSTALL_PATH)"
+	cp -R "$(BUNDLE_ROOT)" "$(INSTALL_PATH)"
+	touch "$@"
 	@echo "Installed successfully. Restart LaunchBar or rescan actions to use."
 
-dmg: sign-bundle
+sign-bundle: $(SIGNED_BUNDLE)
+$(SIGNED_BUNDLE): $(BUNDLE_ROOT)
+	@test -n "$(SIGN_IDENTITY)" || (echo "Set SIGN_IDENTITY to your 'Developer ID Application' signing identity"; exit 1)
+	@echo "Codesigning bundle with $(SIGN_IDENTITY)"
+	codesign --sign "$(SIGN_IDENTITY)" --force --options runtime --timestamp "$(BUNDLE_ROOT)/Contents/Scripts/main"
+	codesign --sign "$(SIGN_IDENTITY)" --force --options runtime --timestamp "$(BUNDLE_ROOT)"
+	codesign --verify --strict --verbose=2 "$(BUNDLE_ROOT)"
+	touch "$@"
+	@echo "Codesign complete."
+
+bundle: $(BUNDLE_ROOT)
+$(BUNDLE_ROOT): $(MAIN_EXECUTABLE) icon.png Info.plist
+	@echo "$(SIGN_IDENTITY)"
+	@echo "Assembling LaunchBar action bundle..."
+	-rm -r "$(BUNDLE_ROOT)" 2>/dev/null
+	mkdir -p "$(SCRIPTS_PATH)"
+	cp $(MAIN_EXECUTABLE) "$(SCRIPTS_PATH)"
+	mkdir -p "$(RESOURCES_PATH)"
+	cp icon.png "$(RESOURCES_PATH)"
+	cp Info.plist "$(BUNDLE_CONTENTS)"
+	@echo "LaunchBar action built successfully at: $(BUNDLE_ROOT)"
+
+main: $(MAIN_EXECUTABLE)
+$(MAIN_EXECUTABLE): main.swift Package.swift
+	@echo "Building main executable with Swift Package Manager..."
+	swift build -c release --arch arm64 --arch x86_64
+
+$(DMG_PATH): sign-bundle
 	@echo "Creating DMG at $(DMG_PATH)..."
 	@rm -f "$(DMG_PATH)"
-	mkdir -p "$(BUILD_PATH)/dmg-root"
-	@rm -rf "$(BUILD_PATH)/dmg-root/$(BUNDLE_NAME)"
-	cp -Rp "$(BUNDLE_ROOT)" "$(BUILD_PATH)/dmg-root/"
-	hdiutil create -fs HFS+ -format UDZO -volname "Swift Evolution" -srcfolder "$(BUILD_PATH)/dmg-root" "$(DMG_PATH)"
+	mkdir -p "$(ACTION_BUILD_PATH)/dmg-root"
+	@rm -rf "$(ACTION_BUILD_PATH)/dmg-root/$(BUNDLE_NAME)"
+	cp -Rp "$(BUNDLE_ROOT)" "$(ACTION_BUILD_PATH)/dmg-root/"
+	hdiutil create -fs HFS+ -format UDZO -volname "Swift Evolution" -srcfolder "$(ACTION_BUILD_PATH)/dmg-root" "$(DMG_PATH)"
 	@echo "DMG created: $(DMG_PATH)"
+
+dmg: $(DMG_PATH)
 
 release: notarize-dmg notarize-pkg
 	@echo "Creating release $(VERSION)..."
@@ -76,14 +105,6 @@ release: notarize-dmg notarize-pkg
 		--title "$(VERSION)" \
 		--generate-notes
 	@echo "Release $(VERSION) published successfully!"
-
-sign-bundle: bundle
-	@test -n "$(SIGN_IDENTITY)" || (echo "Set SIGN_IDENTITY to your 'Developer ID Application' signing identity"; exit 1)
-	@echo "Codesigning bundle with $(SIGN_IDENTITY)"
-	codesign --sign "$(SIGN_IDENTITY)" --force --options runtime --timestamp "$(BUNDLE_ROOT)/Contents/Scripts/main"
-	codesign --sign "$(SIGN_IDENTITY)" --force --options runtime --timestamp "$(BUNDLE_ROOT)"
-	codesign --verify --strict --verbose=2 "$(BUNDLE_ROOT)"
-	@echo "Codesign complete."
 
 pkg: sign-bundle
 	@echo "Creating PKG at $(PKG_PATH)..."
