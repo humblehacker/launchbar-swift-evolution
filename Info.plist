@@ -41,5 +41,14 @@
 			<false />
 		</dict>
 	</dict>
+	<key>LBDescription</key>
+	<dict>
+    	<key>LBAuthor</key>
+    	<string>David Whetstone, Karoy Lorentey</string>
+    	<key>LBWebsiteURL</key>
+    	<string>https://github.com/humblehacker/launchbar-swift-evolution</string>
+        <key>LBSummary</key>
+    	<string>Searches Swift Evolution proposals by number, status, or keywords.</string>
+	</dict>
 </dict>
 </plist>
