@@ -1,0 +1,259 @@
+version: "3"
+
+vars:
+  BUILD_ROOT: .taskbuild
+  ACTION_BUILD_PATH: "{{.BUILD_ROOT}}/action"
+  MAIN_EXECUTABLE: "{{.BUILD_ROOT}}/apple/Products/Release/main"
+  BUNDLE_NAME: SwiftEvolution.lbaction
+  BUNDLE_ROOT: "{{.ACTION_BUILD_PATH}}/{{.BUNDLE_NAME}}"
+  PKG_ROOT: "{{.ACTION_BUILD_PATH}}/pkg-root"
+  PKG_SCRIPTS: "{{.ACTION_BUILD_PATH}}/pkg-scripts"
+  BUNDLE_CONTENTS: "{{.BUNDLE_ROOT}}/Contents"
+  SCRIPTS_PATH: "{{.BUNDLE_CONTENTS}}/Scripts"
+  RESOURCES_PATH: "{{.BUNDLE_CONTENTS}}/Resources"
+  DMG_NAME: Swift-Evolution.dmg
+  PKG_NAME: Swift-Evolution.pkg
+  INSTALL_PATH: '{{default .ENV.INSTALL_PATH (printf "%s/Library/Application Support/LaunchBar/Actions" .HOME)}}'
+  DMG_PATH: "{{.ACTION_BUILD_PATH}}/{{.DMG_NAME}}"
+  PKG_PATH: "{{.ACTION_BUILD_PATH}}/{{.PKG_NAME}}"
+  UNSIGNED_PKG: "{{.PKG_PATH}}.unsigned"
+  PKG_STAGE_ROOT: /tmp/SwiftEvolution-staging
+  NOTARY_SUBMISSION: "{{.ACTION_BUILD_PATH}}/notarization.json"
+  SIGN_IDENTITY_DEFAULT:
+    sh: security find-identity -p codesigning -v | awk -F\" '/Developer ID Application/ {print $2; exit}'
+  PKG_SIGN_IDENTITY_DEFAULT:
+    sh: security find-identity -v | awk -F\" '/Developer ID Installer/ {print $2; exit}'
+  VERSION_DEFAULT:
+    sh: git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0"
+  SIGN_IDENTITY: "{{default .ENV.SIGN_IDENTITY .SIGN_IDENTITY_DEFAULT}}"
+  PKG_SIGN_IDENTITY: "{{default .ENV.PKG_SIGN_IDENTITY .PKG_SIGN_IDENTITY_DEFAULT}}"
+  NOTARY_PROFILE: '{{default .ENV.NOTARY_PROFILE ""}}'
+  VERSION: "{{default .ENV.VERSION .VERSION_DEFAULT}}"
+  SIGNED_BUNDLE: "{{.BUNDLE_ROOT}}.signed"
+  INSTALL_STAMP: "{{.ACTION_BUILD_PATH}}/install.stamp"
+  SIGNED_DMG: "{{.DMG_PATH}}.signed"
+  SIGNED_PKG: "{{.PKG_PATH}}.signed"
+  NOTARIZED_DMG: "{{.DMG_PATH}}.notarized"
+  NOTARIZED_PKG: "{{.PKG_PATH}}.notarized"
+
+tasks:
+  default:
+    desc: Build bundle
+    cmds:
+      - task: bundle
+
+  clean:
+    desc: Clean Swift package and build artifacts
+    cmds:
+      - |
+        swift package clean --build-path "{{.BUILD_ROOT}}"
+        rm -rf "{{.BUILD_ROOT}}"
+
+  main:
+    desc: Build main executable
+    sources:
+      - main.swift
+      - Package.swift
+    generates:
+      - "{{.MAIN_EXECUTABLE}}"
+    cmds:
+      - |
+        echo "Building main executable with Swift Package Manager..."
+        swift build -c release --arch arm64 --arch x86_64 --build-path "{{.BUILD_ROOT}}"
+
+  bundle:
+    desc: Assemble LaunchBar action bundle
+    deps: [main]
+    sources:
+      - "{{.MAIN_EXECUTABLE}}"
+      - icon.png
+      - Info.plist
+    generates:
+      - "{{.BUNDLE_CONTENTS}}/Info.plist"
+    cmds:
+      - |
+        echo "{{.SIGN_IDENTITY}}"
+        echo "Assembling LaunchBar action bundle..."
+        rm -rf "{{.BUNDLE_ROOT}}"
+        mkdir -p "{{.SCRIPTS_PATH}}"
+        cp "{{.MAIN_EXECUTABLE}}" "{{.SCRIPTS_PATH}}"
+        mkdir -p "{{.RESOURCES_PATH}}"
+        cp icon.png "{{.RESOURCES_PATH}}"
+        cp Info.plist "{{.BUNDLE_CONTENTS}}"
+        echo "LaunchBar action built successfully at: {{.BUNDLE_ROOT}}"
+
+  sign-bundle:
+    desc: Codesign the bundle
+    deps: [bundle]
+    sources:
+      - "{{.BUNDLE_ROOT}}"
+    generates:
+      - "{{.SIGNED_BUNDLE}}"
+    cmds:
+      - |
+        if [ -z "{{.SIGN_IDENTITY}}" ]; then
+          echo "Set SIGN_IDENTITY to your 'Developer ID Application' signing identity"
+          exit 1
+        fi
+        echo "Codesigning bundle with {{.SIGN_IDENTITY}}"
+        codesign --sign "{{.SIGN_IDENTITY}}" --force --options runtime --timestamp "{{.BUNDLE_ROOT}}/Contents/Scripts/main"
+        codesign --sign "{{.SIGN_IDENTITY}}" --force --options runtime --timestamp "{{.BUNDLE_ROOT}}"
+        codesign --verify --strict --verbose=2 "{{.BUNDLE_ROOT}}"
+        touch "{{.SIGNED_BUNDLE}}"
+        echo "Codesign complete."
+
+  install:
+    desc: Install the action into LaunchBar user directory
+    deps: [sign-bundle]
+    sources:
+      - "{{.SIGNED_BUNDLE}}"
+    generates:
+      - "{{.INSTALL_PATH}}/{{.BUNDLE_NAME}}"
+    cmds:
+      - |
+        echo "Installing to {{.INSTALL_PATH}}"
+        rm -rf "{{.INSTALL_PATH}}/{{.BUNDLE_NAME}}"
+        mkdir -p "{{.INSTALL_PATH}}"
+        cp -R "{{.BUNDLE_ROOT}}" "{{.INSTALL_PATH}}"
+        # touch "{{.INSTALL_STAMP}}"
+        echo "Installed successfully. Restart LaunchBar or rescan actions to use."
+
+  dmg:
+    desc: Build DMG (unsigned)
+    deps: [sign-bundle]
+    sources:
+      - "{{.SIGNED_BUNDLE}}"
+    generates:
+      - "{{.DMG_PATH}}"
+    cmds:
+      - |
+        echo "Creating DMG at {{.DMG_PATH}}..."
+        rm -f "{{.DMG_PATH}}"
+        mkdir -p "{{.ACTION_BUILD_PATH}}/dmg-root"
+        rm -rf "{{.ACTION_BUILD_PATH}}/dmg-root/{{.BUNDLE_NAME}}"
+        cp -Rp "{{.BUNDLE_ROOT}}" "{{.ACTION_BUILD_PATH}}/dmg-root/"
+        tree "{{.ACTION_BUILD_PATH}}/dmg-root"
+        hdiutil create -fs HFS+ -format UDZO -volname "Swift Evolution" -srcfolder "{{.ACTION_BUILD_PATH}}/dmg-root" "{{.DMG_PATH}}"
+        echo "DMG created: {{.DMG_PATH}}"
+
+  sign-dmg:
+    desc: Codesign DMG
+    deps: [dmg]
+    sources:
+      - "{{.DMG_PATH}}"
+    generates:
+      - "{{.SIGNED_DMG}}"
+    cmds:
+      - |
+        if [ -z "{{.SIGN_IDENTITY}}" ]; then
+          echo "Set SIGN_IDENTITY to your 'Developer ID Application' signing identity"
+          exit 1
+        fi
+        echo "Signing DMG with {{.SIGN_IDENTITY}}"
+        codesign --sign "{{.SIGN_IDENTITY}}" --force "{{.DMG_PATH}}"
+        codesign --verify --verbose=2 "{{.DMG_PATH}}"
+        touch "{{.SIGNED_DMG}}"
+        echo "DMG signed."
+
+  pkg:
+    desc: Build unsigned PKG
+    deps: [sign-bundle]
+    sources:
+      - "{{.SIGNED_BUNDLE}}"
+      - packaging/postinstall.sh
+    generates:
+      - "{{.UNSIGNED_PKG}}"
+    cmds:
+      - |
+        echo "Creating PKG at {{.PKG_PATH}}..."
+        rm -f "{{.PKG_PATH}}" "{{.UNSIGNED_PKG}}"
+        rm -rf "{{.PKG_ROOT}}" "{{.PKG_SCRIPTS}}"
+        mkdir -p "{{.PKG_ROOT}}/Library/Application Support/LaunchBar/Actions"
+        mkdir -p "{{.PKG_SCRIPTS}}"
+        cp -Rp "{{.BUNDLE_ROOT}}" "{{.PKG_ROOT}}/Library/Application Support/LaunchBar/Actions/"
+        sed -e "s|@BUNDLE_NAME@|{{.BUNDLE_NAME}}|g" -e "s|@PKG_STAGE_ROOT@|{{.PKG_STAGE_ROOT}}|g" packaging/postinstall.sh > "{{.PKG_SCRIPTS}}/postinstall"
+        chmod +x "{{.PKG_SCRIPTS}}/postinstall"
+        pkgbuild --root "{{.PKG_ROOT}}" --identifier com.humblehacker.LaunchBar.action.SwiftEvolution --version "{{.VERSION}}" --install-location "{{.PKG_STAGE_ROOT}}" --scripts "{{.PKG_SCRIPTS}}" "{{.UNSIGNED_PKG}}"
+        echo "Unsigned PKG created: {{.UNSIGNED_PKG}}"
+
+  sign-pkg:
+    desc: Codesign PKG
+    deps: [pkg]
+    sources:
+      - "{{.UNSIGNED_PKG}}"
+    generates:
+      - "{{.SIGNED_PKG}}"
+    cmds:
+      - |
+        if [ -z "{{.PKG_SIGN_IDENTITY}}" ]; then
+          echo "Set PKG_SIGN_IDENTITY to your 'Developer ID Installer' signing identity"
+          exit 1
+        fi
+        echo "Signing PKG with {{.PKG_SIGN_IDENTITY}}"
+        productsign --sign "{{.PKG_SIGN_IDENTITY}}" --force "{{.UNSIGNED_PKG}}" "{{.PKG_PATH}}"
+        pkgutil --check-signature "{{.PKG_PATH}}"
+        touch "{{.SIGNED_PKG}}"
+        echo "PKG signed: {{.PKG_PATH}}"
+
+  notarize-dmg:
+    desc: Notarize DMG
+    deps: [sign-dmg]
+    sources:
+      - "{{.DMG_PATH}}"
+    generates:
+      - "{{.NOTARIZED_DMG}}"
+    cmds:
+      - |
+        if [ -z "{{.NOTARY_PROFILE}}" ]; then
+          echo "Set NOTARY_PROFILE to your notarytool keychain profile (stored via 'xcrun notarytool store-credentials')"
+          exit 1
+        fi
+        echo "Submitting {{.DMG_PATH}} for notarization with profile {{.NOTARY_PROFILE}}..."
+        xcrun notarytool submit "{{.DMG_PATH}}" --keychain-profile "{{.NOTARY_PROFILE}}" --wait
+        echo "Stapling ticket to DMG..."
+        xcrun stapler staple "{{.DMG_PATH}}"
+        echo "Validating stapled DMG..."
+        xcrun stapler validate "{{.DMG_PATH}}"
+        spctl --assess --type open --context context:primary-signature -vv "{{.DMG_PATH}}"
+        touch "{{.NOTARIZED_DMG}}"
+        echo "Notarization complete. Distribute the DMG."
+
+  notarize-pkg:
+    desc: Notarize PKG
+    deps: [sign-pkg]
+    sources:
+      - "{{.PKG_PATH}}"
+    generates:
+      - "{{.NOTARIZED_PKG}}"
+    cmds:
+      - |
+        if [ -z "{{.NOTARY_PROFILE}}" ]; then
+          echo "Set NOTARY_PROFILE to your notarytool keychain profile (stored via 'xcrun notarytool store-credentials')"
+          exit 1
+        fi
+        echo "Submitting {{.PKG_PATH}} for notarization with profile {{.NOTARY_PROFILE}}..."
+        xcrun notarytool submit "{{.PKG_PATH}}" --keychain-profile "{{.NOTARY_PROFILE}}" --wait
+        echo "Stapling ticket to PKG..."
+        xcrun stapler staple "{{.PKG_PATH}}"
+        echo "Validating stapled PKG..."
+        pkgutil --check-signature "{{.PKG_PATH}}"
+        spctl --assess --type install -vv "{{.PKG_PATH}}"
+        touch "{{.NOTARIZED_PKG}}"
+        echo "Notarization complete. Distribute the PKG."
+
+  release:
+    desc: Create GitHub release with DMG and PKG (after notarization)
+    deps: [notarize-dmg, notarize-pkg]
+    cmds:
+      - |
+        if ! command -v gh >/dev/null 2>&1; then
+          echo "Error: GitHub CLI (gh) is not installed. Install it with 'brew install gh'"
+          exit 1
+        fi
+        if [ -z "$(git tag -l "{{.VERSION}}")" ]; then
+          echo "Error: Tag {{.VERSION}} does not exist. Create it with 'git tag {{.VERSION}}'"
+          exit 1
+        fi
+        echo "Creating release {{.VERSION}}..."
+        gh release create {{.VERSION}} "{{.DMG_PATH}}" "{{.PKG_PATH}}" --title "{{.VERSION}}" --generate-notes
+        echo "Release {{.VERSION}} published successfully!"

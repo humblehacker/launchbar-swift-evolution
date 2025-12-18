@@ -1,4 +1,6 @@
 .DS_Store
 .build
 .module-cache
+.task
+.taskbuild
 .justbuild
